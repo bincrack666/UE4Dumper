@@ -7,44 +7,41 @@
 
 using namespace std;
 
-uint32 objcount = 0;
-
-vector<uint32> writtenmap;
-
-bool isMapped(uint32 data) {
-	for (int i = 0; i < writtenmap.size(); i++) {
-		if (writtenmap[i] == data) { return true; }
-	}
-	return false;
-}
-
-void writeStructs(ofstream& sdk, kaddr clazz);
-
-string resolveInnerProp(list<kaddr>& recurrce, kaddr prop){
+string resolveProp(list<kaddr>& recurrce, kaddr prop){
     if(prop){
-        UProperty innerprop(prop);
-        UClass innerclass(innerprop.ClassPrivate);
+        string cname = UStruct::getClassName(prop);
 
-        string cname = innerclass.getClassName();
-
-        if (isEqual(cname, "ObjectProperty") || isEqual(cname, "WeakObjectProperty") || isEqual(cname, "LazyObjectProperty")
-            || isEqual(cname, "AssetObjectProperty") || isEqual(cname, "SoftObjectProperty")) {
-            UObjectProperty objectProp(prop);
-            UClass propertyClass(objectProp.PropertyClass);
-            recurrce.push_back(propertyClass.ptr);
-            return propertyClass.getName();
+        if (isEqual(cname, "ObjectProperty") || isEqual(cname, "WeakObjectProperty")
+            || isEqual(cname, "LazyObjectProperty") || isEqual(cname, "AssetObjectProperty")
+            || isEqual(cname, "SoftObjectProperty")) {
+            kaddr propertyClass = UObjectProperty::getPropertyClass(prop);
+            recurrce.push_back(propertyClass);
+            return UObject::getName(propertyClass) + "*";
         }
         else if (isEqual(cname, "ClassProperty") || isEqual(cname, "AssetClassProperty") || isEqual(cname, "SoftClassProperty")) {
-            UClassProperty classProp(prop);
-            UClass metaClass(classProp.MetaClass);
-            recurrce.push_back(metaClass.ptr);
-            return "class " + metaClass.getName();
+            kaddr metaClass = UClassProperty::getMetaClass(prop);
+            recurrce.push_back(metaClass);
+            return "class " + UObject::getName(metaClass);
+        }
+        else if (isEqual(cname, "InterfaceProperty")) {
+            kaddr interfaceClass = UInterfaceProperty::getInterfaceClass(prop);
+            recurrce.push_back(interfaceClass);
+            return "interface class" + UObject::getName(interfaceClass);
         }
         else if (isEqual(cname, "StructProperty")) {
-            UStructProperty structProp(prop);
-            UStruct Struct(structProp.Struct);
-            recurrce.push_back(Struct.ptr);
-            return Struct.getName();
+            kaddr Struct = UStructProperty::getStruct(prop);
+            recurrce.push_back(Struct);
+            return UObject::getName(Struct);
+        }
+        else if (isEqual(cname, "ArrayProperty")) {
+            return resolveProp(recurrce, UArrayProperty::getInner(prop)) + "[]";
+        }
+        else if (isEqual(cname, "SetProperty")) {
+            return "<" + resolveProp(recurrce, USetProperty::getElementProp(prop)) + ">";
+        }
+        else if (isEqual(cname, "MapProperty")) {
+            return "<" + resolveProp(recurrce, UMapProperty::getKeyProp(prop)) + "," +
+                   resolveProp(recurrce, UMapProperty::getValueProp(prop)) + ">";
         }
         else if (isEqual(cname, "BoolProperty")) {
             return "bool";
@@ -95,7 +92,7 @@ string resolveInnerProp(list<kaddr>& recurrce, kaddr prop){
             return "delegate";
         }
         else {
-            return innerprop.getName() + "(" + innerclass.getName() + ")";
+            return UObject::getName(prop) + "(" + cname + ")";
         }
     }
     return "NULL";
@@ -103,210 +100,250 @@ string resolveInnerProp(list<kaddr>& recurrce, kaddr prop){
 
 //---------------------------------------------------------------------------------------------------------------------------//
 
-list<kaddr> writeStructChildrens(ofstream& sdk, kaddr childprop) {
+uint32 classCount = 0;
+
+vector<uint32> structIDMap;
+
+bool isScanned(uint32 id) {
+    for (int i = 0; i < structIDMap.size(); i++) {
+        if (structIDMap[i] == id) { return true; }
+    }
+    return false;
+}
+
+void writeStruct(ofstream& sdk, kaddr clazz);
+
+list<kaddr> writeStructChild(ofstream& sdk, kaddr childprop) {
     list<kaddr> recurrce;
 	kaddr child = childprop;
 	while (child) {
-		UField field(child);
-		UClass fclass(field.ClassPrivate);
+	    kaddr prop = child;
+		string oname = UObject::getName(prop);
+		string cname = UStruct::getClassName(prop);
 
-		string oname = field.getName();
-		string cname = fclass.getClassName();
+		if (isEqual(cname, "ObjectProperty") || isEqual(cname, "WeakObjectProperty") ||
+		    isEqual(cname, "LazyObjectProperty") || isEqual(cname, "AssetObjectProperty") ||
+		    isEqual(cname, "SoftObjectProperty")) {
+			kaddr propertyClass = UObjectProperty::getPropertyClass(prop);
 
-		if (isEqual(oname, "None") || isEqual(cname, "None")) {
-			break;
-		}
-
-		if (isEqual(cname, "ObjectProperty") || isEqual(cname, "WeakObjectProperty") || isEqual(cname, "LazyObjectProperty")
-			|| isEqual(cname, "AssetObjectProperty") || isEqual(cname, "SoftObjectProperty")) {
-
-			UObjectProperty objectProp(child);
-			UClass propertyClass(objectProp.PropertyClass);
-
-			sdk << "\t" << propertyClass.getName() << "* " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << objectProp.Offset << " , " << "Size: " << setbase(10) << objectProp.ElementSize << "]" << endl;
+			sdk << "\t" << UObject::getName(propertyClass) << "* " << oname << ";"
+			    << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+			    << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 			
-			recurrce.push_back(propertyClass.ptr);
+			recurrce.push_back(propertyClass);
 		}
-		else if (isEqual(cname, "ClassProperty") || isEqual(cname, "AssetClassProperty") || isEqual(cname, "SoftClassProperty")) {
-			UClassProperty classProp(child);
-			UClass metaClass(classProp.MetaClass);
+		else if (isEqual(cname, "ClassProperty") || isEqual(cname, "AssetClassProperty") ||
+		    isEqual(cname, "SoftClassProperty")) {
+            kaddr metaClass = UClassProperty::getMetaClass(prop);
 
-			sdk << "\tclass " << metaClass.getName() << "* " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << classProp.Offset << " , " << "Size: " << setbase(10) << classProp.ElementSize << "]" << endl;
+			sdk << "\tclass " << UObject::getName(metaClass) << "* " << oname << ";"
+			    << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+			    << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		
-			recurrce.push_back(metaClass.ptr);
+			recurrce.push_back(metaClass);
 		}
 		else if (isEqual(cname, "InterfaceProperty")) {
-			UInterfaceProperty interfaceProp(child);
-			UClass interfaceClass(interfaceProp.InterfaceClass);
+            kaddr interfaceClass = UInterfaceProperty::getInterfaceClass(prop);
 
-			sdk << "\tinterface class " << interfaceClass.getName() << "* " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << interfaceProp.Offset << " , " << "Size: " << setbase(10) << interfaceProp.ElementSize << "]" << endl;
-
-			recurrce.push_back(interfaceClass.ptr);
+			sdk << "\tinterface class " << UObject::getName(interfaceClass) << "* " << oname << ";"
+			    << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+			    << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "StructProperty")) {
-			UStructProperty structProp(child);
-			UStruct Struct(structProp.Struct);
+            kaddr Struct = UStructProperty::getStruct(prop);
 
-			sdk << "\t" << Struct.getName() << " " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << structProp.Offset << " , " << "Size: " << setbase(10) << structProp.ElementSize << "]" << endl;
+			sdk << "\t" << UObject::getName(Struct) << " " << oname << ";"
+			    << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+			    << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 
-			recurrce.push_back(Struct.ptr);
+			recurrce.push_back(Struct);
 		}
 		else if (isEqual(cname, "ArrayProperty")) {
-			UArrayProperty arrProp(child);
-
-            sdk << "\t" << resolveInnerProp(recurrce, arrProp.Inner) <<"[] " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << arrProp.Offset << " , " << "Size: " << setbase(10) << arrProp.ElementSize << "]" << endl;
+            sdk << "\t" << resolveProp(recurrce, UArrayProperty::getInner(prop)) << "[] " << oname << ";"
+			    << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+			    << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "SetProperty")) {
-			USetProperty setProp(child);
-
-			sdk << "\t<" << resolveInnerProp(recurrce, setProp.ElementProp) << "> " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << setProp.Offset << " , " << "Size: " << setbase(10) << setProp.ElementSize << "]" << endl;
+			sdk << "\t<" << resolveProp(recurrce, USetProperty::getElementProp(prop)) << "> " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "MapProperty")) {
-			UMapProperty mapProp(child);
-
-			sdk << "\t<" << resolveInnerProp(recurrce, mapProp.KeyProp) << ",";
-			sdk << resolveInnerProp(recurrce, mapProp.ValueProp) << "> " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << mapProp.Offset << " , " << "Size: " << setbase(10) << mapProp.ElementSize << "]" << endl;
+			sdk << "\t<" << resolveProp(recurrce, UMapProperty::getKeyProp(prop)) << ","
+                << resolveProp(recurrce, UMapProperty::getValueProp(prop)) << "> " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "BoolProperty")) {
-			UBoolProperty prop(child);
-
-			sdk << "\tbool " << oname << ";";
-			sdk << setbase(10) <<"//(ByteOffset: " << (int)prop.ByteOffset << ", ByteMask: " << (int)prop.ByteMask << ", FieldMask: " << (int)prop.FieldMask << ")";
-			sdk << "[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+			sdk << "\tbool " << oname << ";"
+			    << setbase(10) <<"//(ByteOffset: " << (int)UBoolProperty::getByteOffset(prop)
+			    << ", ByteMask: " << (int)UBoolProperty::getByteMask(prop)
+			    << ", FieldMask: " << (int)UBoolProperty::getFieldMask(prop)  << ")"
+			    << "[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+			    << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "ByteProperty")) {
-			UProperty prop(child);
-
-			sdk << "\tbyte " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+			sdk << "\tbyte " << oname << ";"
+			    << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+			    << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "IntProperty")) {
-			UProperty prop(child);
-
-			sdk << "\tint " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+			sdk << "\tint " << oname << ";"
+			    << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+			    << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "Int8Property")) {
-			UProperty prop(child);
-
-			sdk << "\tint8 " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tint8 " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "Int16Property")) {
-			UProperty prop(child);
-
-			sdk << "\tint16 " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tint16 " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "Int64Property")) {
-			UProperty prop(child);
-
-			sdk << "\tint64 " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tint64 " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "UInt16Property")) {
-			UProperty prop(child);
-
-			sdk << "\tuint16 " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tuint16 " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "UInt32Property")) {
-			UProperty prop(child);
-
-			sdk << "\tuint32 " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tuint32 " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "UInt64Property")) {
-			UProperty prop(child);
-
-			sdk << "\tuint64 " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tuint64 " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "DoubleProperty")) {
-			UProperty prop(child);
-
-			sdk << "\tdouble " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tdouble " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "FloatProperty")) {
-			UProperty prop(child);
-
-			sdk << "\tfloat " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tfloat " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "EnumProperty")) {
-			UProperty prop(child);
-
-			sdk << "\tenum " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tenum " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "StrProperty")) {
-			UProperty prop(child);
-
-			sdk << "\tFString " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tFString " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "TextProperty")) {
-			UProperty prop(child);
-
-			sdk << "\tFText " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tFText " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "NameProperty")) {
-			UProperty prop(child);
-
-			sdk << "\tFName " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tFName " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isEqual(cname, "DelegateProperty") || isEqual(cname, "MulticastDelegateProperty")) {
-			UProperty prop(child);
-
-			sdk << "\tdelegate " << oname << ";";
-			sdk << "//[Offset: 0x" << setbase(16) << prop.Offset << " , " << "Size: " << setbase(10) << prop.ElementSize << "]" << endl;
+            sdk << "\tdelegate " << oname << ";"
+                << "//[Offset: 0x" << setbase(16) << UProperty::getOffset(prop) << " , "
+                << "Size: " << setbase(10) << UProperty::getElementSize(prop) << "]" << endl;
 		}
 		else if (isStartWith(cname, "Function") || isEqual(cname, "DelegateFunction")) {
-			UFunction func(child);
+            string returnVal = "void";
+            string params = "";
 
-			sdk << "\tfunction " << oname << "();";
-			sdk << "// 0x" << setbase(16) << (func.Func - libbase) << endl;
+            kaddr funcParam = UStruct::getChildren(prop);
+            while (funcParam) {
+                uint64 PropertyFlags = UProperty::getPropertyFlags(funcParam);
+
+                if((PropertyFlags & 0x0000000000000400) == 0x0000000000000400){
+                    returnVal = resolveProp(recurrce, funcParam);
+                } else {
+                    if((PropertyFlags & 0x0000000000000100) == 0x0000000000000100){
+                        params += "out ";
+                    }
+                    /*if((PropertyFlags & 0x0000000008000000) == 0x0000000008000000){
+                        params += "ref ";
+                    }*/
+                    if((PropertyFlags & 0x0000000000000002) == 0x0000000000000002){
+                        params += "const ";
+                    }
+                    params += resolveProp(recurrce, funcParam);
+                    params += " ";
+                    params += UObject::getName(funcParam);
+                    params += ", ";
+                }
+
+                funcParam = UField::getNext(funcParam);
+            }
+
+            if(!params.empty()){
+                params.pop_back();
+                params.pop_back();
+            }
+
+            sdk << "\t";
+
+            int32 FunctionFlags = UFunction::getFunctionFlags(prop);
+
+            if((FunctionFlags & 0x00002000) == 0x00002000){
+                sdk << "static" << " ";
+            }
+            /*if((FunctionFlags & 0x00000001) == 0x00000001){
+                sdk << "final" << " ";
+            }
+            if((FunctionFlags & 0x00020000) == 0x00020000){
+                sdk << "public" << " ";
+            }
+            if((FunctionFlags & 0x00040000) == 0x00040000){
+                sdk << "private" << " ";
+            }
+            if((FunctionFlags & 0x00080000) == 0x00080000){
+                sdk << "protected" << " ";
+            }*/
+
+            sdk << returnVal << " " << oname << "(" << params << ");"
+			    << "// 0x" << setbase(16) << (UFunction::getFunc(prop) - libbase) << endl;
 		}
 		else {
 			sdk << "\t" << cname << " " << oname << ";" << endl;
 		}
 
-		child = field.Next;
+		child = UField::getNext(child);
 	}
 	return recurrce;
 }
 
-void writeStructs(ofstream &sdk, kaddr clazz) {
+void writeStruct(ofstream &sdk, kaddr clazz) {
 	list<kaddr> recurrce;
 
-	kaddr currstruct = clazz;
-	while (currstruct) {
-		UStruct Struct(currstruct);
+	kaddr currStruct = clazz;
+	while (currStruct) {
+		uint32 NameID = UObject::getNameID(currStruct);
+		string name = UObject::getName(currStruct);
 
-		uint32 Nameindex = Struct.FNameID;
-		if (!isMapped(Nameindex) && !Struct.getClassName().empty() && !isEqual(Struct.getClassName(), "None")) {
-			writtenmap.push_back(Nameindex);
-			sdk << "Class: " << Struct.getClassPath() << endl;
-			recurrce.merge(writeStructChildrens(sdk, Struct.Children));
+		if (!isScanned(NameID) && !name.empty() && !isEqual(name, "None")) {
+			structIDMap.push_back(NameID);
+			sdk << "Class: " << UStruct::getClassPath(currStruct) << endl;
+			recurrce.merge(writeStructChild(sdk, UStruct::getChildren(currStruct)));
 			sdk << "\n--------------------------------" << endl;
-			objcount++;
+			classCount++;
 		}
 
-		currstruct = Struct.SuperStruct;
+        currStruct = UStruct::getSuperClass(currStruct);
 	}
 
 	for (auto it = recurrce.begin(); it != recurrce.end(); ++it)
-		writeStructs(sdk, *it);
+        writeStruct(sdk, *it);
 }
 
 void DumpSDK(string out) {
@@ -314,75 +351,64 @@ void DumpSDK(string out) {
 	if (sdk.is_open()) {
 		cout << "Dumping SDK List" << endl;
 		clock_t begin = clock();
-		for (uint32 i = 0; i < GUObjectCount; i++) {
-			UObject uobj = GetUObjectFromID(i);
-			if (uobj.isValid()) {
-				writeStructs(sdk, uobj.ClassPrivate);
+		for (int32 i = 0; i < GetObjectCount(); i++) {
+            kaddr uobj = GetUObjectFromID(i);
+			if (UObject::isValid(uobj)) {
+                writeStruct(sdk, UObject::getClass(uobj));
 			}
 		}
 		sdk.close();
 		clock_t end = clock();
 		double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-		cout << objcount << " Items Dumped in SDK in " << elapsed_secs << "S" << endl;
+		cout << classCount << " Items Dumped in SDK in " << elapsed_secs << "S" << endl;
 	}
 }
 
-void TestDump(UObject uobj);
+void TestDump(kaddr uobj);
 
-void DumpSDK2(string out) {
+void DumpSDKW(string out) {
 	ofstream sdk(out + "/SDK.txt", ofstream::out);
 	if (sdk.is_open()) {
 		cout << "Dumping SDK List" << endl;
 		clock_t begin = clock();
-		UObject gworld = UObject(getPtr(getRealOffset(Offsets::GWorld)));
-		if (gworld.ptr) {
+		kaddr gworld = getPtr(getRealOffset(Offsets::GWorld));
+        cout << "UWorld: " << setbase(16) << gworld << setbase(10) << " | Name: " << UObject::getName(gworld) << endl;
+		if (UObject::isValid(gworld)) {
 			//Iterate World
-			writeStructs(sdk, gworld.ClassPrivate);
-			//Iterate Entity
-			kaddr level = getPtr(gworld.ptr + Offsets::UWorldToPersistentLevel);
+            writeStruct(sdk, UObject::getClass(gworld));
+			//Iterate Entities
+			kaddr level = getPtr(gworld + Offsets::UWorldToPersistentLevel);
 			kaddr actorList = getPtr(level + Offsets::ULevelToAActors);
 			int actorsCount = Read<int>(level + Offsets::ULevelToAActorsCount);
 			for (int i = 0; i < actorsCount; i++) {
-				UObject actor = UObject(getPtr(actorList + (i * sizeof(kaddr))));
-				if (actor.ptr) {
-					writeStructs(sdk, actor.ClassPrivate);
+                kaddr actor = getPtr(actorList + (i * Offsets::PointerSize));
+				if (UObject::isValid(actor)) {
+                    writeStruct(sdk, UObject::getClass(actor));
 				}
 			}
 		}
 		sdk.close();
 		clock_t end = clock();
 		double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
-		cout << objcount << " Items Dumped in SDK in " << elapsed_secs << "S" << endl;
+		cout << classCount << " Items Dumped in SDK in " << elapsed_secs << "S" << endl;
 	}
 }
 
-void TestDump(UObject uobj){
-	cout << "Name: " << uobj.getName() << endl;
-	cout << "ObjectPtr: " << setbase(16) << uobj.ptr << endl;
-	cout << "ClassPtr: " << setbase(16) << uobj.ClassPrivate << "\n" << endl;
+void TestDump(kaddr uobj){
+    cout << "Name: " << UObject::getName(uobj) << endl;
+    cout << "Class: " << UStruct::getClassName(uobj) << endl;
+    cout << "ObjectPtr: " << setbase(16) << uobj << endl;
+    cout << "ClassPtr: " << setbase(16) << UObject::getClass(uobj) << "\n" << endl;
 
-	UStruct Struct(0);
-	kaddr currstruct = uobj.ClassPrivate;
-	while (currstruct) {
-		Struct = UStruct(currstruct);
-		currstruct = Struct.SuperStruct;
-	}
-	cout << "Class: " << Struct.getClassPath() << "\n" << endl;
+    kaddr clazz = UObject::getClass(uobj);
+    kaddr child = UStruct::getChildren(clazz);
+    while (child) {
+        cout << setbase(16) << child << " " << UObject::getName(child) << " " << UStruct::getClassName(child) << ";" << endl;
 
-	kaddr child = Struct.Children;
-	while (child) {
-		UField field(child);
-		UClass fclass(field.ClassPrivate);
+        //HexDump(child, 30);
 
-		string oname = field.getName();
-		string cname = fclass.getClassName();
-
-		cout << setbase(16) << child << " " << oname << " " << cname << ";" << endl;
-
-		HexDump(child, 30);
-
-		child = field.Next;
-	}
+        child = UField::getNext(child);
+    }
 }
 
 #endif

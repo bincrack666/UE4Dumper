@@ -16,20 +16,27 @@ namespace Offsets {
 		//---------SDK-----------
 		//Class: FNameEntry
 		FNameEntryToNameString = 0x8,
-		//Class: FUObjectArray
-		FUObjectArrayToTUObjectArray = 0x10,
+        //Class: FUObjectArray
+        FUObjectArrayToTUObjectArray = 0x10,
+		//Class: TUObjectArray
+		TUObjectArrayToNumElements = 0x8,
+        TUObjectArrayToNumElementsNew = 0x10,
 		//Class: UObject
+		UObjectToInternalIndex = 0x8,
 		UObjectToClassPrivate = 0xC,
-		UObjectToFNameindex = 0x10,
+		UObjectToFNameIndex = 0x10,
+		UObjectToOuterPrivate = 0x18,
 		//Class: UField
 		UFieldToNext = 0x1C,
 		//Class: UStruct
 		UStructToSuperStruct = 0x20,
 		UStructToChildren = 0x24,
 		//Class: UFunction
+		UFunctionToFunctionFlags = 0x58,
 		UFunctionToFunc = 0x74,
 		//Class: UProperty
 		UPropertyToElementSize = 0x24,
+        UPropertyToPropertyFlags = 0x28,
 		UPropertyToOffsetInternal = 0x34,
 		//Class: UBoolProperty
 		UBoolPropertyToFieldSize = 0x50,
